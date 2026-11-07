@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -12,6 +13,9 @@ public class FishingController : MonoBehaviour
     [SerializeField] private GameFSM gameFSM;
     [SerializeField] private Camera gameCamera;
 
+    [Header("Charge UI")]
+    [SerializeField] private Slider chargeSlider;
+
     [Header("Fishing Settings")]
     [SerializeField] private float minCastSpeed = 4f;
     [SerializeField] private float maxCastSpeed = 12f;
@@ -19,6 +23,9 @@ public class FishingController : MonoBehaviour
     [SerializeField] private float gravity = 9f;
     [SerializeField] private float reelSpeed = 6f;
     [SerializeField] private float bottomY = -3.5f;
+
+    [Header("Catch Settings")]
+    [SerializeField] private float catchRadius = 0.45f;
 
     private enum HookState
     {
@@ -30,8 +37,12 @@ public class FishingController : MonoBehaviour
     private HookState hookState;
     private LineRenderer fishingLine;
     private Material lineMaterial;
+    private GameController controller;
+    private FishController caughtFish;
 
     private Vector3 velocity;
+    private Vector2 lastPointerPosition;
+
     private float charge;
     private bool wasHeld;
 
@@ -44,6 +55,8 @@ public class FishingController : MonoBehaviour
         fishingLine.positionCount = 2;
         fishingLine.startWidth = 0.025f;
         fishingLine.endWidth = 0.025f;
+        fishingLine.startColor = Color.white;
+        fishingLine.endColor = Color.white;
 
         Shader shader = Shader.Find(
             "Universal Render Pipeline/Unlit"
@@ -55,6 +68,24 @@ public class FishingController : MonoBehaviour
             lineMaterial.SetColor("_BaseColor", Color.white);
             fishingLine.material = lineMaterial;
         }
+
+        if (chargeSlider != null)
+        {
+            chargeSlider.minValue = 0f;
+            chargeSlider.maxValue = 1f;
+            chargeSlider.wholeNumbers = false;
+            chargeSlider.interactable = false;
+
+            // ゲージ上でもタッチ操作を受け取れるようにする
+            foreach (Graphic graphic in
+                     chargeSlider.GetComponentsInChildren<Graphic>(true))
+            {
+                graphic.raycastTarget = false;
+            }
+
+            chargeSlider.SetValueWithoutNotify(0f);
+            chargeSlider.gameObject.SetActive(false);
+        }
     }
 
     private void Start()
@@ -64,9 +95,18 @@ public class FishingController : MonoBehaviour
             gameCamera == null)
         {
             Debug.LogError(
-                "FishingController의 References를 연결해줘."
+                "Rod Tip, Game FSM, Game Camera를 연결해줘."
             );
 
+            enabled = false;
+            return;
+        }
+
+        controller = gameFSM.GetComponent<GameController>();
+
+        if (controller == null)
+        {
+            Debug.LogError("GameController가 필요해.");
             enabled = false;
             return;
         }
@@ -76,14 +116,29 @@ public class FishingController : MonoBehaviour
 
     private void Update()
     {
-        bool held = IsPointerHeld();
+        ReadPointer(out bool held, out Vector2 pointerPosition);
+
         bool pressed = held && !wasHeld;
         bool released = !held && wasHeld;
 
+        // 손을 뗀 뒤에도 마지막 터치 위치로 조준
+        if (held)
+        {
+            lastPointerPosition = pointerPosition;
+        }
+
         wasHeld = held;
 
-        if (gameFSM.CurrentState != gameFSM.PlayState)
+        if (gameFSM.CurrentState != gameFSM.PlayState ||
+            controller.RemainingTime <= 0f)
         {
+            if (hookState == HookState.Charging)
+            {
+                charge = 0f;
+                hookState = HookState.Ready;
+            }
+
+            UpdateChargeUI(false);
             return;
         }
 
@@ -101,7 +156,11 @@ public class FishingController : MonoBehaviour
 
             case HookState.Charging:
                 transform.position = rodTip.position;
-                charge += Time.deltaTime;
+
+                charge = Mathf.Min(
+                    charge + Time.deltaTime,
+                    Mathf.Max(0.01f, chargeTime)
+                );
 
                 if (released)
                 {
@@ -110,6 +169,8 @@ public class FishingController : MonoBehaviour
                 break;
 
             case HookState.InWater:
+                CheckForFish();
+
                 if (held)
                 {
                     ReelHook();
@@ -118,8 +179,17 @@ public class FishingController : MonoBehaviour
                 {
                     SinkHook();
                 }
+
+                if (hookState == HookState.InWater)
+                {
+                    CheckForFish();
+                }
                 break;
         }
+
+        UpdateChargeUI(
+            hookState == HookState.Charging
+        );
     }
 
     private void LateUpdate()
@@ -133,25 +203,46 @@ public class FishingController : MonoBehaviour
         fishingLine.SetPosition(1, transform.position);
     }
 
+    private void UpdateChargeUI(bool visible)
+    {
+        if (chargeSlider == null)
+        {
+            return;
+        }
+
+        if (chargeSlider.gameObject.activeSelf != visible)
+        {
+            chargeSlider.gameObject.SetActive(visible);
+        }
+
+        float power = visible
+            ? Mathf.Clamp01(
+                charge / Mathf.Max(0.01f, chargeTime)
+            )
+            : 0f;
+
+        chargeSlider.SetValueWithoutNotify(power);
+    }
+
     private void CastHook()
     {
         Ray ray = gameCamera.ScreenPointToRay(
-            GetPointerPosition()
+            lastPointerPosition
         );
 
-        Plane fishingPlane = new Plane(
+        Plane plane = new Plane(
             Vector3.forward,
             rodTip.position
         );
 
         Vector3 direction = new Vector3(1f, 0.5f, 0f);
 
-        if (fishingPlane.Raycast(ray, out float distance))
+        if (plane.Raycast(ray, out float distance))
         {
-            direction = ray.GetPoint(distance) - rodTip.position;
+            direction =
+                ray.GetPoint(distance) - rodTip.position;
         }
 
-        // 우측으로 던지고, 위아래 각도를 제한한다.
         float angle = Mathf.Atan2(
             direction.y,
             Mathf.Max(0.1f, direction.x)
@@ -169,13 +260,12 @@ public class FishingController : MonoBehaviour
             charge / Mathf.Max(0.01f, chargeTime)
         );
 
-        float speed = Mathf.Lerp(
+        velocity = direction * Mathf.Lerp(
             minCastSpeed,
             maxCastSpeed,
             power
         );
 
-        velocity = direction * speed;
         hookState = HookState.InWater;
     }
 
@@ -183,24 +273,56 @@ public class FishingController : MonoBehaviour
     {
         velocity.y -= gravity * Time.deltaTime;
 
-        Vector3 nextPosition =
+        Vector3 next =
             transform.position + velocity * Time.deltaTime;
 
-        // 임시 낚시 영역 안에 머물도록 제한한다.
-        if (nextPosition.x >= 8f)
+        if (next.x >= 8f)
         {
-            nextPosition.x = 8f;
+            next.x = 8f;
             velocity.x = 0f;
         }
 
-        if (nextPosition.y <= bottomY)
+        if (next.y <= bottomY)
         {
-            nextPosition.y = bottomY;
+            next.y = bottomY;
             velocity = Vector3.zero;
         }
 
-        nextPosition.z = rodTip.position.z;
-        transform.position = nextPosition;
+        next.z = rodTip.position.z;
+        transform.position = next;
+    }
+
+    private void CheckForFish()
+    {
+        // 한 번에 물고기 한 마리만 잡기
+        if (caughtFish != null)
+        {
+            return;
+        }
+
+        Collider[] hits = Physics.OverlapSphere(
+            transform.position,
+            catchRadius,
+            ~0,
+            QueryTriggerInteraction.Collide
+        );
+
+        foreach (Collider hit in hits)
+        {
+            FishController fish =
+                hit.GetComponentInParent<FishController>();
+
+            if (fish != null && fish.TryHook(transform))
+            {
+                caughtFish = fish;
+
+                Debug.Log(
+                    $"물고기가 걸렸어! {fish.Weight} kg"
+                );
+
+                break;
+            }
+        }
     }
 
     private void ReelHook()
@@ -217,6 +339,18 @@ public class FishingController : MonoBehaviour
             transform.position,
             rodTip.position) < 0.05f)
         {
+            if (caughtFish != null)
+            {
+                controller.CaughtWeight += caughtFish.Weight;
+
+                Debug.Log(
+                    $"잡았다! 총 {controller.CaughtWeight} kg"
+                );
+
+                caughtFish.LandFish();
+                caughtFish = null;
+            }
+
             ResetHook();
         }
     }
@@ -227,27 +361,68 @@ public class FishingController : MonoBehaviour
         velocity = Vector3.zero;
         charge = 0f;
         hookState = HookState.Ready;
+
+        UpdateChargeUI(false);
     }
 
-    private bool IsPointerHeld()
+    private void ReadPointer(
+        out bool held,
+        out Vector2 position)
     {
+        held = false;
+        position = lastPointerPosition;
+
 #if ENABLE_INPUT_SYSTEM
-        return Pointer.current != null &&
-               Pointer.current.press.isPressed;
+        // 모바일 터치를 우선 사용
+        if (Touchscreen.current != null)
+        {
+            var touch = Touchscreen.current.primaryTouch;
+
+            if (touch.press.isPressed)
+            {
+                held = true;
+                position = touch.position.ReadValue();
+                return;
+            }
+        }
+
+        // PC와 에디터에서는 마우스로 테스트
+        if (Mouse.current != null &&
+            Mouse.current.leftButton.isPressed)
+        {
+            held = true;
+            position = Mouse.current.position.ReadValue();
+        }
 #else
-        return Input.GetMouseButton(0);
+        // 기존 입력 시스템의 모바일 터치
+        if (Input.touchCount > 0)
+        {
+            Touch touch = Input.GetTouch(0);
+
+            held =
+                touch.phase != TouchPhase.Ended &&
+                touch.phase != TouchPhase.Canceled;
+
+            position = touch.position;
+            return;
+        }
+
+        held = Input.GetMouseButton(0);
+        position = Input.mousePosition;
 #endif
     }
 
-    private Vector2 GetPointerPosition()
+    private void OnDisable()
     {
-#if ENABLE_INPUT_SYSTEM
-        return Pointer.current != null
-            ? Pointer.current.position.ReadValue()
-            : Vector2.zero;
-#else
-        return Input.mousePosition;
-#endif
+        wasHeld = false;
+
+        if (hookState == HookState.Charging)
+        {
+            charge = 0f;
+            hookState = HookState.Ready;
+        }
+
+        UpdateChargeUI(false);
     }
 
     private void OnDestroy()
