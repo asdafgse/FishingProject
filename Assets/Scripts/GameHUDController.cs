@@ -14,6 +14,8 @@ public class GameHUDController : MonoBehaviour
     [Header("Game Ended Menu")]
     [SerializeField] private GameObject gameEndedPanel;
     [SerializeField] private TMP_Text resultText;
+    [SerializeField] private GameObject loseResultImage;
+    [SerializeField] private GameObject winResultImage;
 
     private void Awake()
     {
@@ -36,18 +38,39 @@ public class GameHUDController : MonoBehaviour
         if (weightText != null)
         {
             weightText.text =
-                $"Weight: {gameController.CaughtWeight:0.#}" +
+                $"{gameController.CaughtWeight:0.#}" +
                 $" / {gameController.TargetWeight:0.#} kg";
         }
     }
 
     public void DisplayGameEndedMenu()
     {
-        if (resultText != null && gameController != null)
+        if (gameController == null)
         {
-            resultText.text = gameController.HasWon
-                ? "You Win!"
-                : "You Lose!";
+            return;
+        }
+
+        bool won = gameController.HasWon;
+
+        if (winResultImage != null)
+        {
+            winResultImage.SetActive(won);
+        }
+
+        if (loseResultImage != null)
+        {
+            loseResultImage.SetActive(!won);
+        }
+
+        // 해당 결과 그림이 없을 때만 글씨를 대신 표시해.
+        bool hasResultImage = won
+            ? winResultImage != null
+            : loseResultImage != null;
+
+        if (resultText != null)
+        {
+            resultText.text = won ? "You Win!" : "You Lose!";
+            resultText.gameObject.SetActive(!hasResultImage);
         }
 
         if (gameEndedPanel != null)
@@ -58,6 +81,16 @@ public class GameHUDController : MonoBehaviour
 
     public void HideGameEndedMenu()
     {
+        if (winResultImage != null)
+        {
+            winResultImage.SetActive(false);
+        }
+
+        if (loseResultImage != null)
+        {
+            loseResultImage.SetActive(false);
+        }
+
         if (gameEndedPanel != null)
         {
             gameEndedPanel.SetActive(false);
