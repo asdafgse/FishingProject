@@ -27,6 +27,10 @@ public class FishingController : MonoBehaviour
     [Header("Catch Settings")]
     [SerializeField] private float catchRadius = 0.45f;
 
+    [Header("Water Splash")]
+    [SerializeField] private ParticleSystem waterSplashPrefab;
+    [SerializeField] private float waterSurfaceY = 0f;
+
     private enum HookState
     {
         Ready,
@@ -45,6 +49,7 @@ public class FishingController : MonoBehaviour
 
     private float charge;
     private bool wasHeld;
+    private bool splashPlayed;
 
     private void Awake()
     {
@@ -76,9 +81,8 @@ public class FishingController : MonoBehaviour
             chargeSlider.wholeNumbers = false;
             chargeSlider.interactable = false;
 
-            // ゲージ上でもタッチ操作を受け取れるようにする
             foreach (Graphic graphic in
-                     chargeSlider.GetComponentsInChildren<Graphic>(true))
+                chargeSlider.GetComponentsInChildren<Graphic>(true))
             {
                 graphic.raycastTarget = false;
             }
@@ -121,11 +125,8 @@ public class FishingController : MonoBehaviour
         bool pressed = held && !wasHeld;
         bool released = !held && wasHeld;
 
-        // 손을 뗀 뒤에도 마지막 터치 위치로 조준
         if (held)
-        {
             lastPointerPosition = pointerPosition;
-        }
 
         wasHeld = held;
 
@@ -163,27 +164,21 @@ public class FishingController : MonoBehaviour
                 );
 
                 if (released)
-                {
                     CastHook();
-                }
+
                 break;
 
             case HookState.InWater:
                 CheckForFish();
 
                 if (held)
-                {
                     ReelHook();
-                }
                 else
-                {
                     SinkHook();
-                }
 
                 if (hookState == HookState.InWater)
-                {
                     CheckForFish();
-                }
+
                 break;
         }
 
@@ -195,9 +190,7 @@ public class FishingController : MonoBehaviour
     private void LateUpdate()
     {
         if (rodTip == null)
-        {
             return;
-        }
 
         fishingLine.SetPosition(0, rodTip.position);
         fishingLine.SetPosition(1, transform.position);
@@ -206,14 +199,10 @@ public class FishingController : MonoBehaviour
     private void UpdateChargeUI(bool visible)
     {
         if (chargeSlider == null)
-        {
             return;
-        }
 
         if (chargeSlider.gameObject.activeSelf != visible)
-        {
             chargeSlider.gameObject.SetActive(visible);
-        }
 
         float power = visible
             ? Mathf.Clamp01(
@@ -266,15 +255,18 @@ public class FishingController : MonoBehaviour
             power
         );
 
+        splashPlayed = false;
         hookState = HookState.InWater;
     }
 
     private void SinkHook()
     {
+        Vector3 previous = transform.position;
+
         velocity.y -= gravity * Time.deltaTime;
 
         Vector3 next =
-            transform.position + velocity * Time.deltaTime;
+            previous + velocity * Time.deltaTime;
 
         if (next.x >= 8f)
         {
@@ -289,16 +281,61 @@ public class FishingController : MonoBehaviour
         }
 
         next.z = rodTip.position.z;
+
+        CheckWaterEntry(previous, next);
         transform.position = next;
+    }
+
+    private void CheckWaterEntry(
+        Vector3 previous,
+        Vector3 next
+    )
+    {
+        if (splashPlayed)
+            return;
+
+        // 위에서 아래로 수면을 통과한 경우만 실행
+        if (previous.y <= waterSurfaceY ||
+            next.y > waterSurfaceY)
+        {
+            return;
+        }
+
+        splashPlayed = true;
+
+        if (waterSplashPrefab == null)
+            return;
+
+        // 프레임 사이의 정확한 수면 통과 위치
+        float fraction =
+            (previous.y - waterSurfaceY) /
+            (previous.y - next.y);
+
+        Vector3 splashPosition = Vector3.Lerp(
+            previous,
+            next,
+            fraction
+        );
+
+        splashPosition.y = waterSurfaceY;
+
+        ParticleSystem splash = Instantiate(
+            waterSplashPrefab,
+            splashPosition,
+            waterSplashPrefab.transform.rotation
+        );
+
+        var main = splash.main;
+        main.loop = false;
+        main.stopAction = ParticleSystemStopAction.Destroy;
+
+        splash.Play(true);
     }
 
     private void CheckForFish()
     {
-        // 한 번에 물고기 한 마리만 잡기
         if (caughtFish != null)
-        {
             return;
-        }
 
         Collider[] hits = Physics.OverlapSphere(
             transform.position,
@@ -336,10 +373,12 @@ public class FishingController : MonoBehaviour
         );
 
         if (Vector3.Distance(
-            transform.position,
-            rodTip.position) < 0.05f)
+                transform.position,
+                rodTip.position
+            ) < 0.05f)
         {
-            if (caughtFish != null)
+            if (caughtFish != null &&
+                caughtFish.isActiveAndEnabled)
             {
                 controller.CaughtWeight += caughtFish.Weight;
 
@@ -348,9 +387,9 @@ public class FishingController : MonoBehaviour
                 );
 
                 caughtFish.LandFish();
-                caughtFish = null;
             }
 
+            caughtFish = null;
             ResetHook();
         }
     }
@@ -360,6 +399,7 @@ public class FishingController : MonoBehaviour
         transform.position = rodTip.position;
         velocity = Vector3.zero;
         charge = 0f;
+        splashPlayed = false;
         hookState = HookState.Ready;
 
         UpdateChargeUI(false);
@@ -367,13 +407,13 @@ public class FishingController : MonoBehaviour
 
     private void ReadPointer(
         out bool held,
-        out Vector2 position)
+        out Vector2 position
+    )
     {
         held = false;
         position = lastPointerPosition;
 
 #if ENABLE_INPUT_SYSTEM
-        // 모바일 터치를 우선 사용
         if (Touchscreen.current != null)
         {
             var touch = Touchscreen.current.primaryTouch;
@@ -386,7 +426,6 @@ public class FishingController : MonoBehaviour
             }
         }
 
-        // PC와 에디터에서는 마우스로 테스트
         if (Mouse.current != null &&
             Mouse.current.leftButton.isPressed)
         {
@@ -394,7 +433,6 @@ public class FishingController : MonoBehaviour
             position = Mouse.current.position.ReadValue();
         }
 #else
-        // 기존 입력 시스템의 모바일 터치
         if (Input.touchCount > 0)
         {
             Touch touch = Input.GetTouch(0);
@@ -428,8 +466,6 @@ public class FishingController : MonoBehaviour
     private void OnDestroy()
     {
         if (lineMaterial != null)
-        {
             Destroy(lineMaterial);
-        }
     }
 }

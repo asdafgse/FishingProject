@@ -42,11 +42,15 @@ public class FishController : MonoBehaviour
     private float noiseSeed;
     private float swimTime;
 
+    public void SetGameFSM(GameFSM value)
+    {
+        gameFSM = value;
+    }
+
     private void Start()
     {
         originalScale = transform.localScale;
 
-        // 시작 위치를 무작위로 배치
         transform.position = new Vector3(
             Random.Range(leftLimit, rightLimit),
             Random.Range(minY, maxY),
@@ -84,13 +88,11 @@ public class FishController : MonoBehaviour
         if (behaviorTimer <= 0f)
             ChooseBehavior();
 
-        // 좌우 경계에 가까워지면 안쪽으로 방향 전환
         if (transform.position.x > rightLimit - 0.8f)
             direction = -1f;
         else if (transform.position.x < leftLimit + 0.8f)
             direction = 1f;
 
-        // 불규칙하게 위아래로 헤엄치기
         float noise = Mathf.PerlinNoise(
             noiseSeed,
             swimTime * 0.45f
@@ -136,7 +138,6 @@ public class FishController : MonoBehaviour
         );
 
         nextPosition.z = 0f;
-
         transform.position = nextPosition;
 
         UpdateFacing(dt);
@@ -147,7 +148,6 @@ public class FishController : MonoBehaviour
         if (!IsHooked)
             return;
 
-        // 게임이 끝나면 버둥거리는 동작도 정지
         bool isPlaying =
             gameFSM != null &&
             gameFSM.CurrentState == gameFSM.PlayState;
@@ -159,7 +159,6 @@ public class FishController : MonoBehaviour
             float facing =
                 transform.localScale.x >= 0f ? 1f : -1f;
 
-            // 입은 위로, 꼬리는 아래로 향하게 회전
             float wiggle = Mathf.Sin(
                 Time.time * struggleSpeed + noiseSeed
             ) * struggleAngle;
@@ -177,7 +176,6 @@ public class FishController : MonoBehaviour
             );
         }
 
-        // 몸이 회전해도 입은 바늘 위치에 고정
         transform.position =
             attachedHook.position -
             transform.TransformVector(mouthOffset);
@@ -226,7 +224,7 @@ public class FishController : MonoBehaviour
 
     public bool TryHook(Transform hook)
     {
-        if (IsHooked || hook == null)
+        if (!isActiveAndEnabled || IsHooked || hook == null)
             return false;
 
         attachedHook = hook;
@@ -237,6 +235,7 @@ public class FishController : MonoBehaviour
 
     public void LandFish()
     {
+        gameObject.SetActive(false);
         Destroy(gameObject);
     }
 }
