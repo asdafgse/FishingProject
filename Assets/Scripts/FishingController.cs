@@ -31,6 +31,20 @@ public class FishingController : MonoBehaviour
     [SerializeField] private ParticleSystem waterSplashPrefab;
     [SerializeField] private float waterSurfaceY = 0f;
 
+    [Header("Sound Effects")]
+    [SerializeField] private AudioClip castSound;
+    [SerializeField] private AudioClip reelSound;
+    [SerializeField] private AudioClip catchSound;
+
+    [SerializeField, Range(0f, 1f)]
+    private float castVolume = 0.7f;
+
+    [SerializeField, Range(0f, 1f)]
+    private float reelVolume = 0.4f;
+
+    [SerializeField, Range(0f, 1f)]
+    private float catchVolume = 0.8f;
+
     private enum HookState
     {
         Ready,
@@ -44,6 +58,9 @@ public class FishingController : MonoBehaviour
     private GameController controller;
     private FishController caughtFish;
 
+    private AudioSource effectSource;
+    private AudioSource reelSource;
+
     private Vector3 velocity;
     private Vector2 lastPointerPosition;
 
@@ -54,7 +71,6 @@ public class FishingController : MonoBehaviour
     private void Awake()
     {
         fishingLine = GetComponent<LineRenderer>();
-
         fishingLine.useWorldSpace = true;
         fishingLine.loop = false;
         fishingLine.positionCount = 2;
@@ -73,6 +89,19 @@ public class FishingController : MonoBehaviour
             lineMaterial.SetColor("_BaseColor", Color.white);
             fishingLine.material = lineMaterial;
         }
+
+        // 던지기와 획득 소리
+        effectSource = gameObject.AddComponent<AudioSource>();
+        effectSource.playOnAwake = false;
+        effectSource.loop = false;
+        effectSource.spatialBlend = 0f;
+        effectSource.volume = 1f;
+
+        // 끌어오기 소리는 별도로 반복 재생
+        reelSource = gameObject.AddComponent<AudioSource>();
+        reelSource.playOnAwake = false;
+        reelSource.loop = true;
+        reelSource.spatialBlend = 0f;
 
         if (chargeSlider != null)
         {
@@ -133,6 +162,8 @@ public class FishingController : MonoBehaviour
         if (gameFSM.CurrentState != gameFSM.PlayState ||
             controller.RemainingTime <= 0f)
         {
+            StopReelSound();
+
             if (hookState == HookState.Charging)
             {
                 charge = 0f;
@@ -181,6 +212,13 @@ public class FishingController : MonoBehaviour
 
                 break;
         }
+
+        UpdateReelSound(
+            held &&
+            hookState == HookState.InWater &&
+            gameFSM.CurrentState == gameFSM.PlayState &&
+            controller.RemainingTime > 0f
+        );
 
         UpdateChargeUI(
             hookState == HookState.Charging
@@ -257,6 +295,8 @@ public class FishingController : MonoBehaviour
 
         splashPlayed = false;
         hookState = HookState.InWater;
+
+        PlayEffect(castSound, castVolume);
     }
 
     private void SinkHook()
@@ -294,7 +334,6 @@ public class FishingController : MonoBehaviour
         if (splashPlayed)
             return;
 
-        // 위에서 아래로 수면을 통과한 경우만 실행
         if (previous.y <= waterSurfaceY ||
             next.y > waterSurfaceY)
         {
@@ -306,7 +345,6 @@ public class FishingController : MonoBehaviour
         if (waterSplashPrefab == null)
             return;
 
-        // 프레임 사이의 정확한 수면 통과 위치
         float fraction =
             (previous.y - waterSurfaceY) /
             (previous.y - next.y);
@@ -377,10 +415,14 @@ public class FishingController : MonoBehaviour
                 rodTip.position
             ) < 0.05f)
         {
+            StopReelSound();
+
             if (caughtFish != null &&
                 caughtFish.isActiveAndEnabled)
             {
                 controller.CaughtWeight += caughtFish.Weight;
+
+                PlayEffect(catchSound, catchVolume);
 
                 Debug.Log(
                     $"잡았다! 총 {controller.CaughtWeight} kg"
@@ -396,6 +438,8 @@ public class FishingController : MonoBehaviour
 
     private void ResetHook()
     {
+        StopReelSound();
+
         transform.position = rodTip.position;
         velocity = Vector3.zero;
         charge = 0f;
@@ -403,6 +447,43 @@ public class FishingController : MonoBehaviour
         hookState = HookState.Ready;
 
         UpdateChargeUI(false);
+    }
+
+    private void PlayEffect(AudioClip clip, float volume)
+    {
+        if (clip == null || effectSource == null)
+            return;
+
+        effectSource.PlayOneShot(clip, volume);
+    }
+
+    private void UpdateReelSound(bool shouldPlay)
+    {
+        if (reelSource == null)
+            return;
+
+        if (!shouldPlay || reelSound == null)
+        {
+            StopReelSound();
+            return;
+        }
+
+        reelSource.volume = reelVolume;
+
+        if (reelSource.clip != reelSound)
+        {
+            reelSource.Stop();
+            reelSource.clip = reelSound;
+        }
+
+        if (!reelSource.isPlaying)
+            reelSource.Play();
+    }
+
+    private void StopReelSound()
+    {
+        if (reelSource != null && reelSource.isPlaying)
+            reelSource.Stop();
     }
 
     private void ReadPointer(
@@ -452,6 +533,7 @@ public class FishingController : MonoBehaviour
 
     private void OnDisable()
     {
+        StopReelSound();
         wasHeld = false;
 
         if (hookState == HookState.Charging)

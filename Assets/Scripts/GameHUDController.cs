@@ -17,8 +17,27 @@ public class GameHUDController : MonoBehaviour
     [SerializeField] private GameObject loseResultImage;
     [SerializeField] private GameObject winResultImage;
 
+    [Header("Game Ended Audio")]
+    [SerializeField] private AudioSource gameBGM;
+    [SerializeField] private AudioClip winSound;
+    [SerializeField] private AudioClip loseSound;
+
+    [SerializeField, Range(0f, 1f)]
+    private float resultVolume = 0.8f;
+
+    private AudioSource resultAudioSource;
+    private bool resultSoundPlayed;
+
     private void Awake()
     {
+        resultAudioSource =
+            gameObject.AddComponent<AudioSource>();
+
+        resultAudioSource.playOnAwake = false;
+        resultAudioSource.loop = false;
+        resultAudioSource.spatialBlend = 0f;
+        resultAudioSource.volume = 1f;
+
         HideGameEndedMenu();
     }
 
@@ -62,7 +81,6 @@ public class GameHUDController : MonoBehaviour
             loseResultImage.SetActive(!won);
         }
 
-        // 해당 결과 그림이 없을 때만 글씨를 대신 표시해.
         bool hasResultImage = won
             ? winResultImage != null
             : loseResultImage != null;
@@ -77,10 +95,40 @@ public class GameHUDController : MonoBehaviour
         {
             gameEndedPanel.SetActive(true);
         }
+
+        if (gameBGM != null)
+        {
+            gameBGM.Stop();
+        }
+
+        // 여러 번 호출되어도 효과음은 한 번만 재생
+        if (!resultSoundPlayed)
+        {
+            resultSoundPlayed = true;
+
+            AudioClip resultSound = won
+                ? winSound
+                : loseSound;
+
+            if (resultSound != null)
+            {
+                resultAudioSource.PlayOneShot(
+                    resultSound,
+                    resultVolume
+                );
+            }
+        }
     }
 
     public void HideGameEndedMenu()
     {
+        resultSoundPlayed = false;
+
+        if (resultAudioSource != null)
+        {
+            resultAudioSource.Stop();
+        }
+
         if (winResultImage != null)
         {
             winResultImage.SetActive(false);
